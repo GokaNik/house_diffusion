@@ -31,12 +31,13 @@ def load_rplanhg_data(
     dataset = RPlanhgDataset(set_name, analog_bit, target_set)
     if deterministic:
         loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=False, num_workers=2, drop_last=False
+            dataset, batch_size=batch_size, shuffle=False, num_workers=0, drop_last=False
         )
     else:
         loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=True, num_workers=2, drop_last=False
+            dataset, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=False
         )
+
     while True:
         yield from loader
 
@@ -85,7 +86,7 @@ get_one_hot = lambda x, z: np.eye(z)[x]
 class RPlanhgDataset(Dataset):
     def __init__(self, set_name, analog_bit, target_set, non_manhattan=False):
         super().__init__()
-        base_dir = '../datasets/rplan'
+        base_dir = 'datasets/rplan'
         self.non_manhattan = non_manhattan
         self.set_name = set_name
         self.analog_bit = analog_bit
@@ -128,37 +129,43 @@ class RPlanhgDataset(Dataset):
                         continue
                 a = [rms_type, rms_bbs, fp_eds, eds_to_rms]
                 self.subgraphs.append(a)
-            for graph in tqdm(self.subgraphs):
-                rms_type = graph[0]
-                rms_bbs = graph[1]
-                fp_eds = graph[2]
-                eds_to_rms= graph[3]
-                rms_bbs = np.array(rms_bbs)
-                fp_eds = np.array(fp_eds)
+            for idx, graph in enumerate(tqdm(self.subgraphs)):
+                try:
+                    rms_type = graph[0]
+                    rms_bbs = graph[1]
+                    fp_eds = graph[2]
+                    eds_to_rms = graph[3]
+                    rms_bbs = np.array(rms_bbs)
+                    fp_eds = np.array(fp_eds)
 
-                # extract boundary box and centralize
-                tl = np.min(rms_bbs[:, :2], 0)
-                br = np.max(rms_bbs[:, 2:], 0)
-                shift = (tl+br)/2.0 - 0.5
-                rms_bbs[:, :2] -= shift
-                rms_bbs[:, 2:] -= shift
-                fp_eds[:, :2] -= shift
-                fp_eds[:, 2:] -= shift
-                tl -= shift
-                br -= shift
+                    # extract boundary box and centralize
+                    tl = np.min(rms_bbs[:, :2], 0)
+                    br = np.max(rms_bbs[:, 2:], 0)
+                    shift = (tl + br) / 2.0 - 0.5
+                    rms_bbs[:, :2] -= shift
+                    rms_bbs[:, 2:] -= shift
+                    fp_eds[:, :2] -= shift
+                    fp_eds[:, 2:] -= shift
+                    tl -= shift
+                    br -= shift
 
-                # build input graph
-                graph_nodes, graph_edges, rooms_mks = self.build_graph(rms_type, fp_eds, eds_to_rms)
+                    # build input graph
+                    graph_nodes, graph_edges, rooms_mks = self.build_graph(rms_type, fp_eds, eds_to_rms)
 
-                house = []
-                for room_mask, room_type in zip(rooms_mks, graph_nodes):
-                    room_mask = room_mask.astype(np.uint8)
-                    room_mask = cv.resize(room_mask, (256, 256), interpolation = cv.INTER_AREA)
-                    contours, _ = cv.findContours(room_mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
-                    contours = contours[0]
-                    house.append([contours[:,0,:], room_type])
-                self.org_graphs.append(graph_edges)
-                self.org_houses.append(house)
+                    house = []
+                    for room_mask, room_type in zip(rooms_mks, graph_nodes):
+                        room_mask = room_mask.astype(np.uint8)
+                        room_mask = cv.resize(room_mask, (256, 256), interpolation=cv.INTER_AREA)
+                        contours, _ = cv.findContours(room_mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+                        contours = contours[0]
+                        house.append([contours[:, 0, :], room_type])
+                    self.org_graphs.append(graph_edges)
+                    self.org_houses.append(house)
+                except Exception as e:
+                    print(
+                        f"Пропущен план номер {idx} ({graph if 'file_name' not in graph else graph['file_name']}), ошибка: {e}")
+                    continue
+
             houses = []
             door_masks = []
             self_masks = []
