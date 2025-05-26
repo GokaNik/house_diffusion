@@ -262,7 +262,7 @@ class GaussianDiffusion:
         assert t.shape == (B,)
         xtalpha = _extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x.shape).permute([0,2,1])
         epsalpha = _extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x.shape).permute([0,2,1])
-        model_output_dec, model_output_bin = model(x, self._scale_timesteps(t), xtalpha=xtalpha, epsalpha=epsalpha, is_syn=True, **model_kwargs)
+        model_output_dec, model_output_bin = model(x, self._scale_timesteps(t), xtalpha=xtalpha, epsalpha=epsalpha, is_syn=False, **model_kwargs)
         model_output = model_output_dec
 
         if analog_bit:
@@ -514,8 +514,8 @@ class GaussianDiffusion:
             device=device,
             progress=progress,
             analog_bit=analog_bit,
-        ))):
-            if i>970:
+        ), start=1)):
+            if i % 25 == 0 or i == 1 or i > 950:
                 myfinal.append(sample['sample'])
             final = sample
         return th.stack(myfinal)

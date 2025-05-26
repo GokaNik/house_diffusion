@@ -190,9 +190,9 @@ def estimate_graph(indx, polys, nodes, G_gt, ID_COLOR, draw_graph, save_svg):
     return mistakes
 
 def save_samples(
-        sample, ext, model_kwargs, 
-        tmp_count, num_room_types, 
-        save_gif=False, save_edges=False,
+        sample, ext, model_kwargs,
+        tmp_count, num_room_types,
+        save_gif=True, save_edges=False,
         door_indices = [11, 12, 13], ID_COLOR=None,
         is_syn=False, draw_graph=False, save_svg=False):
     prefix = 'syn_' if is_syn else ''
@@ -287,6 +287,7 @@ def main():
     logger.configure()
 
     logger.log("creating model and diffusion...")
+    print(args_to_dict(args, model_and_diffusion_defaults().keys()))
     model, diffusion = create_model_and_diffusion(
         **args_to_dict(args, model_and_diffusion_defaults().keys())
     )
@@ -297,7 +298,7 @@ def main():
     model.eval()
 
     errors = []
-    for _ in range(5):
+    for _ in range(1):
         logger.log("sampling...")
         tmp_count = 0
         os.makedirs('outputs/pred', exist_ok=True)
@@ -345,7 +346,7 @@ def main():
                 sample = bin_to_int_sample(sample)
 
             graph_error = save_samples(sample_gt, 'gt', model_kwargs, tmp_count, num_room_types, ID_COLOR=ID_COLOR, draw_graph=args.draw_graph, save_svg=args.save_svg)
-            graph_error = save_samples(sample, 'pred', model_kwargs, tmp_count, num_room_types, ID_COLOR=ID_COLOR, is_syn=True, draw_graph=args.draw_graph, save_svg=args.save_svg)
+            graph_error = save_samples(sample, 'pred', model_kwargs, tmp_count, num_room_types, ID_COLOR=ID_COLOR, is_syn=False, draw_graph=args.draw_graph, save_svg=args.save_svg)
             graph_errors.extend(graph_error)
             tmp_count+=sample_gt.shape[1]
         logger.log("sampling complete")

@@ -2,6 +2,31 @@
 **[HouseDiffusion: Vector Floorplan Generation via a Diffusion Model with Discrete and Continuous Denoising](https://arxiv.org/abs/2211.13287)**
 <img src='figs/teaser.png' width=100%>
 ## Installation
+
+**0. Как фиксить ошибки:**
+нужно скачать библиотеки для win/mac:
+
+- https://www.microsoft.com/en-us/download/details.aspx?id=105289
+
+```
+setx PATH "%PATH%;C:\Program Files\Microsoft MPI\Bin"
+```
+
+- https://www.graphviz.org/download/
+```
+ python -m pip install --config-settings="--global-option=build_ext" --config-settings="--global-option=-IC:\Program Files\Graphviz\include" --config-settings="--global-option=-LC:\Program Files\Graphviz\lib" pygraphviz
+```
+при установке обязательно добавить в PATH, а потом установить через pip
+
+
+если есть гпу, тогда сразу устанавливайте торч с cuda, если нет, то везде нужно убрать some_array.cuda()
+```
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+```
+
+
+
+
 **1. Clone our repo and install the requirements:**
 
 Our implementation is based on the public implementation of [guided-diffusion](https://github.com/openai/guided-diffusion). For installation instructions, please refer to their repository. Keep in mind that our current version has not been cleaned and some features from the original repository may not function correctly.

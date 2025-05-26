@@ -1,10 +1,12 @@
 import math
 import random
+import shutil
+
 import torch as th
 
 from PIL import Image, ImageDraw
 import blobfile as bf
-from mpi4py import MPI
+# from mpi4py import MPI
 import numpy as np
 from torch.utils.data import DataLoader, Dataset
 from glob import glob
@@ -121,7 +123,7 @@ class RPlanhgDataset(Dataset):
             for line in tqdm(lines):
                 cnt=cnt+1
                 file_name = f'{base_dir}/{line[:-1]}'
-                rms_type, fp_eds,rms_bbs,eds_to_rms=reader(file_name) 
+                rms_type, fp_eds,rms_bbs,eds_to_rms=reader(file_name)
                 fp_size = len([x for x in rms_type if x != 15 and x != 17])
                 if self.set_name=='train' and fp_size == target_set:
                         continue
@@ -162,8 +164,12 @@ class RPlanhgDataset(Dataset):
                     self.org_graphs.append(graph_edges)
                     self.org_houses.append(house)
                 except Exception as e:
-                    print(
-                        f"Пропущен план номер {idx} ({graph if 'file_name' not in graph else graph['file_name']}), ошибка: {e}")
+                    fname = None
+                    if isinstance(graph, dict):
+                        fname = graph.get('file_name')
+                    # Логируем и пропускаем этот план
+                    # shutil.rmtree(file_name)
+                    print(f"Skipping plan idx={idx}" + (f", file={fname}" if fname else "") + f": {e}")
                     continue
 
             houses = []
@@ -245,8 +251,15 @@ class RPlanhgDataset(Dataset):
             self.num_coords = 2
             self.graphs = graphs
 
-            np.savez_compressed(f'processed_rplan/rplan_{set_name}_{target_set}', graphs=self.graphs, houses=self.houses,
-                    door_masks=self.door_masks, self_masks=self.self_masks, gen_masks=self.gen_masks)
+            graphs_arr = np.array(self.graphs, dtype=object)
+            houses_arr = np.array(self.houses, dtype=object)
+
+            np.savez_compressed(
+                f'processed_rplan/rplan_{set_name}_{target_set}',
+                graphs=graphs_arr,
+                houses=houses_arr,
+                cnumber_dist=cnumber_dist
+            )
             if self.set_name=='train':
                 np.savez_compressed(f'processed_rplan/rplan_{set_name}_{target_set}_cndist', cnumber_dist=cnumber_dist)
 
@@ -316,8 +329,13 @@ class RPlanhgDataset(Dataset):
                 self.syn_self_masks = self_masks
                 self.syn_gen_masks = gen_masks
                 self.syn_graphs = graphs
-                np.savez_compressed(f'processed_rplan/rplan_{set_name}_{target_set}_syn', graphs=self.syn_graphs, houses=self.syn_houses,
-                        door_masks=self.syn_door_masks, self_masks=self.syn_self_masks, gen_masks=self.syn_gen_masks)
+
+                np.savez_compressed(f'processed_rplan/rplan_{set_name}_{target_set}',
+                                    graphs=np.array(self.graphs, dtype=object), houses=self.houses,
+                                    door_masks=self.door_masks, self_masks=self.self_masks, gen_masks=self.gen_masks)
+                if self.set_name == 'train':
+                    np.savez_compressed(f'processed_rplan/rplan_{set_name}_{target_set}_cndist',
+                                        cnumber_dist=cnumber_dist)
 
     def __len__(self):
         return len(self.houses)
