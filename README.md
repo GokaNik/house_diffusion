@@ -8,8 +8,8 @@ python -m scripts.image_train --dataset rplan --batch_size 32 --set_name train -
 2. Создать eval файлы - запустить rplan_datasets.py
 3. Нужно создать whitelist - запустить list_gen.py (Это csv с путями до доступных файлов
 4. Теперь можно запускать image_sample_singl.py
-   a. Выберете путь из whitelist.csv
-   b. Запустить по
+a. Выберете путь из whitelist.csv
+b. Запустить по команде
 ```
 python -m scripts.image_sample_singl --dataset rplan --batch_size 32 --set_name eval --target_set 8 --model_path ckpts/exp/model250000.pt --single_json_file datasets/rplan/3294.json --num_samples 64  
 ```
