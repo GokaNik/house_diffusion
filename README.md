@@ -1,4 +1,22 @@
 # HouseDiffusion
+
+**Порядок действий для работы:**
+1. Создать предобработанные train файлы 
+```
+python -m scripts.image_train --dataset rplan --batch_size 32 --set_name train --target_set 8
+```
+2. Создать eval файлы - запустить rplan_datasets.py
+3. Нужно создать whitelist - запустить list_gen.py (Это csv с путями до доступных файлов
+4. Теперь можно запускать image_sample_singl.py
+   a. Выберете путь из whitelist.csv
+   b. Запустить по
+```
+python -m scripts.image_sample_singl --dataset rplan --batch_size 32 --set_name eval --target_set 8 --model_path ckpts/exp/model250000.pt --single_json_file datasets/rplan/3294.json --num_samples 64  
+```
+Где --single_json_file datasets/rplan/3294.json путь до конкретного файла
+
+**Или скопировать уже готовые файлы и whitelist и просто запускать программу**
+
 **[HouseDiffusion: Vector Floorplan Generation via a Diffusion Model with Discrete and Continuous Denoising](https://arxiv.org/abs/2211.13287)**
 <img src='figs/teaser.png' width=100%>
 ## Installation
