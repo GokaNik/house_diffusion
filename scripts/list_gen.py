@@ -27,11 +27,8 @@ for idx in range(min_len):
         "filename": str(filenames[idx]),
         "num_rooms": int(num_rooms[idx])
     })
-# Сохраним как JSON (рекомендую для удобства)
-with open("whitelist.json", "w") as f:
-    json.dump(whitelist, f, indent=2, ensure_ascii=False)
 
-# При необходимости, сохраним также как CSV
+# CSV
 with open("whitelist.csv", "w", newline="") as f:
     writer = csv.DictWriter(f, fieldnames=["index", "filename", "num_rooms"])
     writer.writeheader()
