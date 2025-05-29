@@ -7,6 +7,7 @@ import blobfile as bf
 from mpi4py import MPI
 import numpy as np
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.data._utils.collate import default_collate
 from glob import glob
 import json
 import os
@@ -17,25 +18,38 @@ from shapely.ops import unary_union
 from collections import defaultdict
 import copy
 
+
+def tolerant_collate(batch):
+    samples, kwargs_list = zip(*batch)
+    batched_samples = default_collate(samples)
+
+    merged = {}
+    for key in kwargs_list[0]:
+        items = [d[key] for d in kwargs_list]
+        try:
+            merged[key] = default_collate(items)
+        except TypeError:
+            merged[key] = [
+                x.tolist() if isinstance(x, np.ndarray) else x for x in items
+            ]
+    return batched_samples, merged
+
 def load_rplanhg_data(
     batch_size,
     analog_bit,
     target_set = 8,
     set_name = 'train',
 ):
-    """
-    For a dataset, create a generator over (shapes, kwargs) pairs.
-    """
     print(f"loading {set_name} of target set {target_set}")
     deterministic = False if set_name=='train' else True
     dataset = RPlanhgDataset(set_name, analog_bit, target_set)
     if deterministic:
         loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=False, num_workers=0, drop_last=False
+            dataset, batch_size=batch_size, shuffle=False, num_workers=0, drop_last=False, collate_fn=tolerant_collate
         )
     else:
         loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=False
+            dataset, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=False, collate_fn=tolerant_collate
         )
 
     while True:
@@ -143,8 +157,6 @@ class RPlanhgDataset(Dataset):
                     eds_to_rms = graph[3]
                     rms_bbs = np.array(rms_bbs)
                     fp_eds = np.array(fp_eds)
-
-                    # extract boundary box and centralize
                     tl = np.min(rms_bbs[:, :2], 0)
                     br = np.max(rms_bbs[:, 2:], 0)
                     shift = (tl + br) / 2.0 - 0.5
@@ -155,7 +167,6 @@ class RPlanhgDataset(Dataset):
                     tl -= shift
                     br -= shift
 
-                    # build input graph
                     graph_nodes, graph_edges, rooms_mks = self.build_graph(rms_type, fp_eds, eds_to_rms)
 
                     house = []
@@ -185,7 +196,6 @@ class RPlanhgDataset(Dataset):
 
             if self.non_manhattan:
                 for h, graph in tqdm(zip(self.org_houses, self.org_graphs), desc='processing dataset'):
-                    # Generating non-manhattan Balconies
                     tmp = []
                     for i, room in enumerate(h):
                         if room[1]>10:
@@ -205,19 +215,16 @@ class RPlanhgDataset(Dataset):
                 for i, room in enumerate(h):
                     if room[1]>10:
                         room[1] = {15:11, 17:12, 16:13}[room[1]]
-                    room[0] = np.reshape(room[0], [len(room[0]), 2])/256. - 0.5 # [[x0,y0],[x1,y1],...,[x15,y15]] and map to 0-1 - > -0.5, 0.5
-                    room[0] = room[0] * 2 # map to [-1, 1]
+                    room[0] = np.reshape(room[0], [len(room[0]), 2])/256. - 0.5
+                    room[0] = room[0] * 2
                     if self.set_name=='train':
                         cnumber_dist[room[1]].append(len(room[0]))
-                    # Adding conditions
                     num_room_corners = len(room[0])
                     rtype = np.repeat(np.array([get_one_hot(room[1], 25)]), num_room_corners, 0)
                     room_index = np.repeat(np.array([get_one_hot(len(house)+1, 32)]), num_room_corners, 0)
                     corner_index = np.array([get_one_hot(x, 32) for x in range(num_room_corners)])
-                    # Src_key_padding_mask
                     padding_mask = np.repeat(1, num_room_corners)
                     padding_mask = np.expand_dims(padding_mask, 1)
-                    # Generating corner bounds for attention masks
                     connections = np.array([[i,(i+1)%num_room_corners] for i in range(num_room_corners)])
                     connections += num_points
                     corner_bounds.append([num_points, num_points+num_room_corners])
@@ -279,15 +286,12 @@ class RPlanhgDataset(Dataset):
                     while np.sum(num_room_corners_total)>=max_num_points:
                         num_room_corners_total = [cnumber_dist[room[1]][random.randint(0, len(cnumber_dist[room[1]])-1)] for room in h]
                     for i, room in enumerate(h):
-                        # Adding conditions
                         num_room_corners = num_room_corners_total[i]
                         rtype = np.repeat(np.array([get_one_hot(room[1], 25)]), num_room_corners, 0)
                         room_index = np.repeat(np.array([get_one_hot(len(house)+1, 32)]), num_room_corners, 0)
                         corner_index = np.array([get_one_hot(x, 32) for x in range(num_room_corners)])
-                        # Src_key_padding_mask
                         padding_mask = np.repeat(1, num_room_corners)
                         padding_mask = np.expand_dims(padding_mask, 1)
-                        # Generating corner bounds for attention masks
                         connections = np.array([[i,(i+1)%num_room_corners] for i in range(num_room_corners)])
                         connections += num_points
                         corner_bounds.append([num_points, num_points+num_room_corners])
@@ -338,7 +342,19 @@ class RPlanhgDataset(Dataset):
     def __getitem__(self, idx):
         # idx = int(idx//20)
         arr = self.houses[idx][:, :self.num_coords]
-        graph = np.concatenate((self.graphs[idx], np.zeros([200-len(self.graphs[idx]), 3])), 0)
+        raw_g = self.graphs[idx] 
+        if isinstance(raw_g, np.ndarray) and raw_g.dtype == object:
+            raw_g = np.asarray(list(raw_g), dtype=np.int64)
+        else:
+            raw_g = np.asarray(raw_g, dtype=np.int64)
+        graph = np.zeros((200, 3), dtype=np.int64)
+        graph[: len(raw_g)] = raw_g
+
+        if self.set_name == "eval":
+            syn_raw = self.syn_houses[idx]
+            if isinstance(syn_raw, np.ndarray) and syn_raw.dtype == object:
+                syn_raw = np.asarray(list(syn_raw), dtype=np.float32)
+                self.syn_houses[idx] = syn_raw
 
         cond = {
                 'door_mask': self.door_masks[idx],
@@ -352,7 +368,12 @@ class RPlanhgDataset(Dataset):
                 'graph': graph,
                 }
         if self.set_name == 'eval':
-            syn_graph = np.concatenate((self.syn_graphs[idx], np.zeros([200-len(self.syn_graphs[idx]), 3])), 0)
+            #syn_graph = np.concatenate((self.syn_graphs[idx], np.zeros([200-len(self.syn_graphs[idx]), 3])), 0)
+            syn_raw_g = self.syn_graphs[idx]
+            if isinstance(syn_raw_g, np.ndarray) and syn_raw_g.dtype == object:
+                syn_raw_g = np.asarray(list(syn_raw_g), dtype=np.int64)
+            syn_graph = np.zeros((200, 3), dtype=np.int64)
+            syn_graph[: len(syn_raw_g)] = syn_raw_g
             assert (graph == syn_graph).all(), idx
             cond.update({
                 'syn_door_mask': self.syn_door_masks[idx],
@@ -366,7 +387,6 @@ class RPlanhgDataset(Dataset):
                 'syn_graph': syn_graph,
                 })
         if self.set_name == 'train':
-            #### Random Rotate
             rotation = random.randint(0,3)
             if rotation == 1:
                 arr[:, [0, 1]] = arr[:, [1, 0]]
@@ -376,21 +396,6 @@ class RPlanhgDataset(Dataset):
             elif rotation == 3:
                 arr[:, [0, 1]] = arr[:, [1, 0]]
                 arr[:, 1] = -arr[:, 1]
-
-            ## To generate any rotation uncomment this
-
-            # if self.non_manhattan:
-                # theta = random.random()*np.pi/2
-                # rot_mat = np.array([[np.cos(theta), -np.sin(theta), 0],
-                             # [np.sin(theta), np.cos(theta), 0]])
-                # arr = np.matmul(arr,rot_mat)[:,:2]
-
-            # Random Scale
-            # arr = arr * np.random.normal(1., .5)
-
-            # Random Shift
-            # arr[:, 0] = arr[:, 0] + np.random.normal(0., .1)
-            # arr[:, 1] = arr[:, 1] + np.random.normal(0., .1)
 
         if not self.analog_bit:
             arr = np.transpose(arr, [1, 0])
@@ -422,7 +427,6 @@ class RPlanhgDataset(Dataset):
                     v_curr = tuple(edges[e_ind_curr][2:])
                 find_next = not find_next 
             else:
-                # look for next edge
                 for k, e in enumerate(edges):
                     if k not in e_visited:
                         if (v_curr == tuple(e[:2])):
@@ -436,7 +440,6 @@ class RPlanhgDataset(Dataset):
                             e_visited.append(k)
                             break
 
-            # extract next sequence
             if v_curr == seq_tracker[-1]:
                 polys.append(seq_tracker)
                 for k, e in enumerate(edges):
@@ -454,10 +457,8 @@ class RPlanhgDataset(Dataset):
         return polys
 
     def build_graph(self, rms_type, fp_eds, eds_to_rms, out_size=64):
-        # create edges
         triples = []
         nodes = rms_type 
-        # encode connections
         for k in range(len(nodes)):
             for l in range(len(nodes)):
                 if l > k:
@@ -472,7 +473,6 @@ class RPlanhgDataset(Dataset):
                             triples.append([k, -1, l])
                         else:
                             triples.append([k, -1, l])
-        # get rooms masks
         eds_to_rms_tmp = []
         for l in range(len(eds_to_rms)):                  
             eds_to_rms_tmp.append([eds_to_rms[l][0]])
@@ -480,12 +480,10 @@ class RPlanhgDataset(Dataset):
         im_size = 256
         fp_mk = np.zeros((out_size, out_size))
         for k in range(len(nodes)):
-            # add rooms and doors
             eds = []
             for l, e_map in enumerate(eds_to_rms_tmp):
                 if (k in e_map):
                     eds.append(l)
-            # draw rooms
             rm_im = Image.new('L', (im_size, im_size))
             dr = ImageDraw.Draw(rm_im)
             for eds_poly in [eds]:
@@ -503,14 +501,12 @@ class RPlanhgDataset(Dataset):
             rms_masks.append(rm_arr)
             if rms_type[k] != 15 and rms_type[k] != 17:
                 fp_mk[inds] = k+1
-        # trick to remove overlap
         for k in range(len(nodes)):
             if rms_type[k] != 15 and rms_type[k] != 17:
                 rm_arr = np.zeros((out_size, out_size))
                 inds = np.where(fp_mk==k+1)
                 rm_arr[inds] = 1.0
                 rms_masks[k] = rm_arr
-        # convert to array
         nodes = np.array(nodes)
         triples = np.array(triples)
         rms_masks = np.array(rms_masks)
