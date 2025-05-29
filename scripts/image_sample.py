@@ -11,7 +11,7 @@ import torch as th
 
 import io
 import PIL.Image as Image
-import drawsvg as drawsvg
+import drawSvg as drawsvg
 import cairosvg
 import imageio
 from tqdm import tqdm
@@ -375,7 +375,7 @@ def main():
                 if isinstance(v, list):
                     v = np.asarray(v)
                 if isinstance(v, np.ndarray) and v.dtype != object:
-                    model_kwargs[k] = th.from_numpy(v)
+                    model_kwargs[k] = th.from_numpy(v).to(dist_util.dev())
 
             sample = sample_fn(
                 model,
@@ -385,7 +385,7 @@ def main():
                 analog_bit=args.analog_bit,
             )
             sample_gt = data_sample.unsqueeze(0)
-            sample = sample.permute([0, 1, 3, 2])   
+            sample = sample.permute([0, 1, 3, 2])
             sample_gt = sample_gt.permute([0, 1, 3, 2])
             if args.analog_bit:
                 sample_gt = bin_to_int_sample(sample_gt)

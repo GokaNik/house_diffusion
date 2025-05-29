@@ -317,7 +317,7 @@ def to_scalar(x):
 def save_samples(
         sample, ext, model_kwargs, 
         tmp_count, num_room_types, 
-        save_gif=False, save_edges=False,
+        save_gif=True, save_edges=False,
         door_indices=[11, 12, 13], ID_COLOR=None,
         is_syn=False, draw_graph=False, save_svg=False):
     prefix = 'syn_' if is_syn else ''
@@ -507,6 +507,13 @@ def batchify_single_plan(arr, cond):
     return data_sample, model_kwargs
 
 def main():
+
+    os.makedirs('outputs/pred', exist_ok=True)
+    os.makedirs('outputs/gt', exist_ok=True)
+    os.makedirs('outputs/gif', exist_ok=True)
+    os.makedirs('outputs/graphs_gt', exist_ok=True)
+    os.makedirs('outputs/graphs_pred', exist_ok=True)
+
     args = create_argparser().parse_args()
     update_arg_parser(args)
 
@@ -520,7 +527,7 @@ def main():
     model.load_state_dict(
         dist_util.load_state_dict(args.model_path, map_location="cpu")
     )
-    model.to(dist_util.dev())
+    # model.to(dist_util.dev())
     model.eval()
 
     if hasattr(args, "single_json_file") and args.single_json_file:
@@ -551,7 +558,7 @@ def main():
             model_kwargs=model_kwargs,
             analog_bit=args.analog_bit,
         )
-        
+
         sample_gt = data_sample.unsqueeze(0)
         sample = sample.permute([0, 1, 3, 2])
         sample_gt = sample_gt.permute([0, 1, 3, 2])
@@ -562,7 +569,7 @@ def main():
         save_samples(
             sample_gt, 'gt', model_kwargs, 0, num_room_types, ID_COLOR=ID_COLOR, draw_graph=args.draw_graph, save_svg=args.save_svg
         )
-        
+
         save_samples(
             sample, 'pred', model_kwargs, 0, num_room_types, ID_COLOR=ID_COLOR, is_syn=True, draw_graph=args.draw_graph, save_svg=args.save_svg
         )
@@ -575,11 +582,6 @@ def main():
     for _ in range(5):
         logger.log("sampling...")
         tmp_count = 0
-        os.makedirs('outputs/pred', exist_ok=True)
-        os.makedirs('outputs/gt', exist_ok=True)
-        os.makedirs('outputs/gif', exist_ok=True)
-        os.makedirs('outputs/graphs_gt', exist_ok=True)
-        os.makedirs('outputs/graphs_pred', exist_ok=True)
 
         if args.dataset == 'rplan':
             ID_COLOR = {
@@ -606,7 +608,6 @@ def main():
             data_sample, model_kwargs = next(data)
             for key in model_kwargs:
                 model_kwargs[key] = model_kwargs[key].cpu()
-                
             sample = sample_fn(
                 model,
                 data_sample.shape,

@@ -514,8 +514,8 @@ class GaussianDiffusion:
             device=device,
             progress=progress,
             analog_bit=analog_bit,
-        ))):
-            if i>970:
+        ), start=1)):
+            if i % 25 == 0 or i == 1 or i > 950:
                 myfinal.append(sample['sample'])
             final = sample
         return th.stack(myfinal)
