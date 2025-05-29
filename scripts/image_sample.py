@@ -11,7 +11,7 @@ import torch as th
 
 import io
 import PIL.Image as Image
-import drawSvg as drawsvg
+import drawsvg as drawsvg
 import cairosvg
 import imageio
 from tqdm import tqdm
@@ -37,6 +37,23 @@ from shapely.geos import lgeos
 # th.manual_seed(0)
 # random.seed(0)
 # np.random.seed(0)
+
+
+room_labels = {
+    1: "LivingRoom",
+    2: "Kitchen",
+    3: "Bedroom",
+    4: "Bathroom",
+    5: "Balcony",
+    6: "Entrance",
+    7: "DiningRoom",
+    8: "StudyRoom",
+    10: "Storage",
+    13: "External",
+    15: "FrontDoor",
+    16: "Unknown",
+    17: "InteriorDoor",
+}
 
 bin_to_int = lambda x: int("".join([str(int(i.cpu().data)) for i in x]), 2)
 def bin_to_int_sample(sample, resolution=256):
@@ -104,7 +121,7 @@ def get_graph(indx, g_true, ID_COLOR, draw_graph, save_svg):
 
 def estimate_graph(indx, polys, nodes, G_gt, ID_COLOR, draw_graph, save_svg):
     nodes = np.array(nodes)
-    G_gt = G_gt[1-th.where((G_gt == th.tensor([0,0,0], device='cuda')).all(dim=1))[0]]
+    G_gt = G_gt[1-th.where((G_gt == th.tensor([0,0,0], device='cpu')).all(dim=1))[0]]
     G_gt = get_graph(indx, [nodes, G_gt], ID_COLOR, draw_graph, save_svg)
     G_estimated = nx.Graph()
     colors_H = []
@@ -188,12 +205,11 @@ def estimate_graph(indx, polys, nodes, G_gt, ID_COLOR, draw_graph, save_svg):
             plt.savefig(f'outputs/graphs_pred/{indx}.jpg')
         plt.close('all')
     return mistakes
-
 def save_samples(
-        sample, ext, model_kwargs, 
-        tmp_count, num_room_types, 
-        save_gif=False, save_edges=False,
-        door_indices = [11, 12, 13], ID_COLOR=None,
+        sample, ext, model_kwargs,
+        tmp_count, num_room_types,
+        save_gif=True, save_edges=False,
+        door_indices=[15, 17], ID_COLOR=None,
         is_syn=False, draw_graph=False, save_svg=False):
     prefix = 'syn_' if is_syn else ''
     graph_errors = []
@@ -201,82 +217,109 @@ def save_samples(
         sample = sample[-1:]
     for i in tqdm(range(sample.shape[1])):
         resolution = 256
-        images = []
-        images2 = []
-        images3 = []
+        legend_width = 200
+        canvas_width = resolution + legend_width
+        images, images2, images3 = [], [], []
         for k in range(sample.shape[0]):
             draw = drawsvg.Drawing(resolution, resolution, displayInline=False)
-            draw.append(drawsvg.Rectangle(0,0,resolution,resolution, fill='black'))
+            draw.append(drawsvg.Rectangle(0, 0, resolution, resolution, fill='black'))
             draw2 = drawsvg.Drawing(resolution, resolution, displayInline=False)
-            draw2.append(drawsvg.Rectangle(0,0,resolution,resolution, fill='black'))
+            draw2.append(drawsvg.Rectangle(0, 0, resolution, resolution, fill='black'))
             draw3 = drawsvg.Drawing(resolution, resolution, displayInline=False)
-            draw3.append(drawsvg.Rectangle(0,0,resolution,resolution, fill='black'))
-            draw_color = drawsvg.Drawing(resolution, resolution, displayInline=False)
-            draw_color.append(drawsvg.Rectangle(0,0,resolution,resolution, fill='white'))
-            polys = []
-            types = []
-            for j, point in (enumerate(sample[k][i])):
-                if model_kwargs[f'{prefix}src_key_padding_mask'][i][j]==1:
+            draw3.append(drawsvg.Rectangle(0, 0, resolution, resolution, fill='black'))
+
+            draw_color = drawsvg.Drawing(canvas_width, resolution, displayInline=False)
+            draw_color.append(drawsvg.Rectangle(0, 0, resolution, resolution, fill='white'))
+            draw_color.append(drawsvg.Rectangle(resolution, 0, legend_width, resolution, fill='#F9F9F9'))
+            draw_color.append(drawsvg.Text(f'Floorplan Sample {tmp_count + i}', 20,
+                                           resolution / 2, 30, text_anchor='middle',
+                                           font_family='sans-serif', font_weight='bold', fill='#333'))
+
+            polys, types = [], []
+            for j, point in enumerate(sample[k][i]):
+                if model_kwargs[f'{prefix}src_key_padding_mask'][i][j] == 1:
                     continue
-                point = point.cpu().data.numpy()
-                if j==0:
+                point = point.cpu().numpy()
+                if j == 0:
                     poly = []
-                if j>0 and (model_kwargs[f'{prefix}room_indices'][i, j]!=model_kwargs[f'{prefix}room_indices'][i, j-1]).any():
+                if j > 0 and (model_kwargs[f'{prefix}room_indices'][i, j] !=
+                              model_kwargs[f'{prefix}room_indices'][i, j - 1]).any():
                     polys.append(poly)
                     types.append(c)
                     poly = []
-                pred_center = False
-                if pred_center:
-                    point = point/2 + 1
-                    point = point * resolution//2
-                else:
-                    point = point/2 + 0.5
-                    point = point * resolution
+                point = (point / 2 + 0.5) * resolution
                 poly.append((point[0], point[1]))
-                c = np.argmax(model_kwargs[f'{prefix}room_types'][i][j-1].cpu().numpy())
+                c = int(np.argmax(model_kwargs[f'{prefix}room_types'][i][j - 1].cpu().numpy()))
             polys.append(poly)
             types.append(c)
+
+            used_types = set()
+
             for poly, c in zip(polys, types):
-                if c in door_indices or c==0:
+                if c in door_indices or c == 0:
                     continue
-                room_type = c
-                c = webcolors.hex_to_rgb(ID_COLOR[c])
-                draw_color.append(drawsvg.Lines(*np.array(poly).flatten().tolist(), close=True, fill=ID_COLOR[room_type], fill_opacity=1.0, stroke='black', stroke_width=1))
-                draw.append(drawsvg.Lines(*np.array(poly).flatten().tolist(), close=True, fill='black', fill_opacity=0.0, stroke=webcolors.rgb_to_hex([int(x/2) for x in c]), stroke_width=0.5*(resolution/256)))
-                draw2.append(drawsvg.Lines(*np.array(poly).flatten().tolist(), close=True, fill=ID_COLOR[room_type], fill_opacity=1.0, stroke=webcolors.rgb_to_hex([int(x/2) for x in c]), stroke_width=0.5*(resolution/256)))
-                for corner in poly:
-                    draw.append(drawsvg.Circle(corner[0], corner[1], 2*(resolution/256), fill=ID_COLOR[room_type], fill_opacity=1.0, stroke='gray', stroke_width=0.25))
-                    draw3.append(drawsvg.Circle(corner[0], corner[1], 2*(resolution/256), fill=ID_COLOR[room_type], fill_opacity=1.0, stroke='gray', stroke_width=0.25))
+                used_types.add(c)
+                coords = np.array(poly).flatten().tolist()
+                draw_color.append(drawsvg.Lines(*coords, close=True,
+                                                fill=ID_COLOR[c], fill_opacity=0.9,
+                                                stroke='white', stroke_width=1))
+
+                half_hex = webcolors.rgb_to_hex([int(x / 2) for x in webcolors.hex_to_rgb(ID_COLOR[c])])
+                draw.append(drawsvg.Lines(*coords, close=True, fill='black', fill_opacity=0.0,
+                                          stroke=half_hex, stroke_width=0.5 * (resolution / 256)))
+                draw2.append(drawsvg.Lines(*coords, close=True, fill=ID_COLOR[c], fill_opacity=1.0,
+                                           stroke=half_hex, stroke_width=0.5 * (resolution / 256)))
+                for x, y in poly:
+                    draw.append(drawsvg.Circle(x, y, 2 * (resolution / 256),
+                                               fill=ID_COLOR[c], stroke='gray', stroke_width=0.25))
+                    draw3.append(drawsvg.Circle(x, y, 2 * (resolution / 256),
+                                                fill=ID_COLOR[c], stroke='gray', stroke_width=0.25))
+
             for poly, c in zip(polys, types):
                 if c not in door_indices:
                     continue
-                room_type = c
-                c = webcolors.hex_to_rgb(ID_COLOR[c])
-                draw_color.append(drawsvg.Lines(*np.array(poly).flatten().tolist(), close=True, fill=ID_COLOR[room_type], fill_opacity=1.0, stroke='black', stroke_width=1))
-                draw.append(drawsvg.Lines(*np.array(poly).flatten().tolist(), close=True, fill='black', fill_opacity=0.0, stroke=webcolors.rgb_to_hex([int(x/2) for x in c]), stroke_width=0.5*(resolution/256)))
-                draw2.append(drawsvg.Lines(*np.array(poly).flatten().tolist(), close=True, fill=ID_COLOR[room_type], fill_opacity=1.0, stroke=webcolors.rgb_to_hex([int(x/2) for x in c]), stroke_width=0.5*(resolution/256)))
-                for corner in poly:
-                    draw.append(drawsvg.Circle(corner[0], corner[1], 2*(resolution/256), fill=ID_COLOR[room_type], fill_opacity=1.0, stroke='gray', stroke_width=0.25))
-                    draw3.append(drawsvg.Circle(corner[0], corner[1], 2*(resolution/256), fill=ID_COLOR[room_type], fill_opacity=1.0, stroke='gray', stroke_width=0.25))
-            images.append(Image.open(io.BytesIO(cairosvg.svg2png(draw.asSvg()))))
-            images2.append(Image.open(io.BytesIO(cairosvg.svg2png(draw2.asSvg()))))
-            images3.append(Image.open(io.BytesIO(cairosvg.svg2png(draw3.asSvg()))))
-            if k==sample.shape[0]-1 or True:
-                if save_edges:
-                    draw.saveSvg(f'outputs/{ext}/{tmp_count+i}_{k}_{ext}.svg')
-                if save_svg:
-                    draw_color.saveSvg(f'outputs/{ext}/{tmp_count+i}c_{k}_{ext}.svg')
-                else:
-                    Image.open(io.BytesIO(cairosvg.svg2png(draw_color.asSvg()))).save(f'outputs/{ext}/{tmp_count+i}c_{ext}.png')
-            if k==sample.shape[0]-1:
+                used_types.add(c)
+                coords = np.array(poly).flatten().tolist()
+                draw_color.append(drawsvg.Lines(*coords, close=True, fill=ID_COLOR[c],
+                                                fill_opacity=1.0, stroke='black', stroke_width=1))
+
+            legend_x, legend_y, entry_h = resolution + 20, 70, 24
+            draw_color.append(drawsvg.Text('Legend', 16, legend_x, legend_y - entry_h,
+                                           text_anchor='start', font_family='sans-serif',
+                                           font_weight='bold', fill='#333'))
+            for idx, rid in enumerate(sorted(used_types)):
+                print(rid)
+                y = legend_y + idx * entry_h
+                draw_color.append(drawsvg.Rectangle(legend_x, y - 14, 16, 16,
+                                                    fill=ID_COLOR.get(rid, '#CCCCCC'),
+                                                    stroke='#666', stroke_width=0.5))
+                draw_color.append(drawsvg.Text(room_labels[rid], 12, legend_x + 22, y,
+                                               text_anchor='start', font_family='sans-serif', fill='#333'))
+
+            images.append(Image.open(io.BytesIO(cairosvg.svg2png(draw.as_svg()))))
+            images2.append(Image.open(io.BytesIO(cairosvg.svg2png(draw2.as_svg()))))
+            images3.append(Image.open(io.BytesIO(cairosvg.svg2png(draw3.as_svg()))))
+
+            if save_edges:
+                draw.save_svg(f'outputs/{ext}/{tmp_count + i}_{k}_{ext}.svg')
+            if save_svg:
+                draw_color.save_svg(f'outputs/{ext}/{tmp_count + i}c_{k}_{ext}.svg')
+            else:
+                Image.open(io.BytesIO(cairosvg.svg2png(draw_color.as_svg()))
+                           ).save(f'outputs/{ext}/{tmp_count + i}c_{ext}.png')  
+            if k == sample.shape[0] - 1:
                 if 'graph' in model_kwargs:
-                    graph_errors.append(estimate_graph(tmp_count+i, polys, types, model_kwargs[f'{prefix}graph'][i], ID_COLOR=ID_COLOR, draw_graph=draw_graph, save_svg=save_svg))
+                    graph_errors.append(estimate_graph(tmp_count + i, polys, types,
+                                                       model_kwargs[f'{prefix}graph'][i],
+                                                       ID_COLOR=ID_COLOR,
+                                                       draw_graph=draw_graph,
+                                                       save_svg=save_svg))
                 else:
                     graph_errors.append(0)
         if save_gif:
-            imageio.mimwrite(f'outputs/gif/{tmp_count+i}.gif', images, fps=10, loop=1)
-            imageio.mimwrite(f'outputs/gif/{tmp_count+i}_v2.gif', images2, fps=10, loop=1)
-            imageio.mimwrite(f'outputs/gif/{tmp_count+i}_v3.gif', images3, fps=10, loop=1)
+            imageio.mimwrite(f'outputs/gif/{tmp_count + i}.gif', images, fps=10, loop=1)
+            imageio.mimwrite(f'outputs/gif/{tmp_count + i}_v2.gif', images2, fps=10, loop=1)
+            imageio.mimwrite(f'outputs/gif/{tmp_count + i}_v3.gif', images3, fps=10, loop=1)
     return graph_errors
 
 def main():
@@ -287,6 +330,7 @@ def main():
     logger.configure()
 
     logger.log("creating model and diffusion...")
+    print(args_to_dict(args, model_and_diffusion_defaults().keys()))
     model, diffusion = create_model_and_diffusion(
         **args_to_dict(args, model_and_diffusion_defaults().keys())
     )
@@ -297,7 +341,7 @@ def main():
     model.eval()
 
     errors = []
-    for _ in range(5):
+    for _ in range(1):
         logger.log("sampling...")
         tmp_count = 0
         os.makedirs('outputs/pred', exist_ok=True)
@@ -327,8 +371,11 @@ def main():
                 diffusion.p_sample_loop if not args.use_ddim else diffusion.ddim_sample_loop
             )
             data_sample, model_kwargs = next(data)
-            for key in model_kwargs:
-                model_kwargs[key] = model_kwargs[key].cuda()
+            for k, v in model_kwargs.items():
+                if isinstance(v, list):
+                    v = np.asarray(v)
+                if isinstance(v, np.ndarray) and v.dtype != object:
+                    model_kwargs[k] = th.from_numpy(v)
 
             sample = sample_fn(
                 model,
@@ -337,19 +384,19 @@ def main():
                 model_kwargs=model_kwargs,
                 analog_bit=args.analog_bit,
             )
-            sample_gt = data_sample.cuda().unsqueeze(0)
-            sample = sample.permute([0, 1, 3, 2])
+            sample_gt = data_sample.unsqueeze(0)
+            sample = sample.permute([0, 1, 3, 2])   
             sample_gt = sample_gt.permute([0, 1, 3, 2])
             if args.analog_bit:
                 sample_gt = bin_to_int_sample(sample_gt)
                 sample = bin_to_int_sample(sample)
 
             graph_error = save_samples(sample_gt, 'gt', model_kwargs, tmp_count, num_room_types, ID_COLOR=ID_COLOR, draw_graph=args.draw_graph, save_svg=args.save_svg)
-            graph_error = save_samples(sample, 'pred', model_kwargs, tmp_count, num_room_types, ID_COLOR=ID_COLOR, is_syn=True, draw_graph=args.draw_graph, save_svg=args.save_svg)
+            graph_error = save_samples(sample, 'pred', model_kwargs, tmp_count, num_room_types, ID_COLOR=ID_COLOR, is_syn=False, draw_graph=args.draw_graph, save_svg=args.save_svg)
             graph_errors.extend(graph_error)
             tmp_count+=sample_gt.shape[1]
         logger.log("sampling complete")
-        fid_score = calculate_fid_given_paths(['outputs/gt', 'outputs/pred'], 64, 'cuda', 2048)
+        fid_score = calculate_fid_given_paths(['outputs/gt', 'outputs/pred'], 64, 'cpu', 2048)
         print(f'FID: {fid_score}')
         print(f'Compatibility: {np.mean(graph_errors)}')
         errors.append([fid_score, np.mean(graph_errors)])
